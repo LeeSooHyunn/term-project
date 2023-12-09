@@ -1,0 +1,104 @@
+code Description
+
+import cv2
+
+def detect_and_draw(img, cascade, nested_cascade, scale, try_flip, glasses):
+    # 이미지 복사
+    output = img.copy()
+
+    # 그레이스케일로 변환
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 이미지 크기를 조정
+    fx = 1 / scale
+    small_img = cv2.resize(gray, None, fx=fx, fy=fx, interpolation=cv2.INTER_LINEAR_EXACT)
+
+    # 히스토그램 평활화
+    cv2.equalizeHist(small_img, small_img)
+    
+    # 얼굴을 검출
+    faces = cascade.detectMultiScale(small_img, 1.1, 2, 0 | cv2.CASCADE_SCALE_IMAGE, minSize=(30, 30))
+    
+    for i, (x, y, w, h) in enumerate(faces):
+        if not nested_cascade.empty():
+            small_img_roi = small_img[y:y + h, x:x + w]
+
+            # 눈을 검출
+            nested_objects = nested_cascade.detectMultiScale(small_img_roi, 1.1, 2, 0 | cv2.CASCADE_SCALE_IMAGE, minSize=(20, 20))
+
+            points = []
+            for (nx, ny, nw, nh) in nested_objects:
+                center = (round((x + nx + nw * 0.5) / scale), round((y + ny + nh * 0.5) / scale))
+                points.append(center)
+                
+            if len(points) == 2:
+                center1, center2 = points
+                center = ((center1[0] + center2[0]) // 2, (center1[1] + center2[1]) // 2)
+                width = 4 * abs(center2[0] - center1[0])
+                height = 1 * width  # 가로:세로 비율 3:1로 고정
+
+                img_scale = width / glasses.shape[1]
+                glasses_resized = cv2.resize(glasses, (int(width), int(height)))
+
+                # 이미지를 합성하여 결과를 생성
+                output = overlay_image(output, glasses_resized, center)
+    
+    # 결과를 화면에 표시
+    cv2.imshow("result", output)
+
+def overlay_image(background, foreground, location):
+    # 이미지 복사
+    output = background.copy()
+
+    # 전경의 중심 좌표와 오프셋 계산
+    y_offset, x_offset = location[1] - foreground.shape[0] // 2, location[0] - foreground.shape[1] // 2
+
+    # 전경 이미지를 배경 이미지에 합성
+    for y in range(max(y_offset, 0), min(y_offset + foreground.shape[0], background.shape[0])):
+        for x in range(max(x_offset, 0), min(x_offset + foreground.shape[1], background.shape[1])):
+            if foreground[y - y_offset, x - x_offset, 3] != 0:
+                output[y, x] = foreground[y - y_offset, x - x_offset, :3]
+
+    return output
+
+# Haar Cascade 분류기 파일 이름 설정
+cascade_name = 'haarcascade_frontalface_alt.xml'
+nested_cascade_name = 'haarcascade_eye_tree_eyeglasses.xml'
+
+# Haar Cascade 분류기 로드
+cascade = cv2.CascadeClassifier(cv2.data.haarcascades + cascade_name)
+nested_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + nested_cascade_name)
+
+# 안경 이미지 파일 경로 설정
+glasses_image = './image/sunglasses.png'
+
+# 안경 이미지 로드
+glasses = cv2.imread(glasses_image, cv2.IMREAD_UNCHANGED)
+
+# 이미지를 제대로 읽지 못한 경우 에러 메시지 출력 후 프로그램 종료
+if glasses is None:
+    print("Could not read image -", glasses_image)
+    exit()
+
+# 웹캠 열기
+capture = cv2.VideoCapture(0)
+
+while True:
+    # 프레임 읽기
+    ret, frame = capture.read()
+
+    # 프레임이 없는 경우 종료
+    if frame is None:
+        break
+
+    # 얼굴 및 눈을 검출하고 안경 합성하여 결과 표시
+    detect_and_draw(frame, cascade, nested_cascade, 1, False, glasses)
+
+    # 'q' 키가 눌리면 종료
+    key = cv2.waitKey(10)
+    if key == 27 or key == ord('q') or key == ord('Q'):
+        break
+
+# 웹캠 해제 및 OpenCV 창 닫기
+capture.release()
+cv2.destroyAllWindows()
